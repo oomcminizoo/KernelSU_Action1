@@ -218,65 +218,42 @@ jobs:
     - name: Build kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        
-        # 调试：查看 gcc-64 目录内容
-        echo "=== 检查 gcc-64 目录 ==="
-        ls -la $GITHUB_WORKSPACE/kernel_workspace/gcc-64/ || echo "gcc-64 目录不存在"
-        if [ -d "$GITHUB_WORKSPACE/kernel_workspace/gcc-64" ]; then
-            echo "=== 查找 gcc-64/bin 下所有文件 ==="
-            find $GITHUB_WORKSPACE/kernel_workspace/gcc-64 -type f -name "*gcc*" 2>/dev/null || echo "未找到任何 gcc 文件"
-            echo "=== 完整目录树（第一层） ==="
-            ls -la $GITHUB_WORKSPACE/kernel_workspace/gcc-64/
-            if [ -d "$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin" ]; then
-                ls -la $GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin/
-            else
-                echo "bin 子目录不存在，尝试查找任何 bin 目录"
-                find $GITHUB_WORKSPACE/kernel_workspace/gcc-64 -type d -name "bin" 2>/dev/null
-            fi
-        fi
-        
-        # 智能定位 GCC 编译器
+    
+        # ----- 智能定位 GCC（写死两个候选路径） -----
         GCC_BIN=""
-        # 尝试标准名称
         if [ -f "$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin/aarch64-linux-android-gcc" ]; then
             GCC_BIN="$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin/aarch64-linux-android-gcc"
+        elif [ -f "$GITHUB_WORKSPACE/kernel_workspace/gcc-64/aarch64-linux-android/bin/aarch64-linux-android-gcc" ]; then
+            GCC_BIN="$GITHUB_WORKSPACE/kernel_workspace/gcc-64/aarch64-linux-android/bin/aarch64-linux-android-gcc"
         else
-            # 尝试查找所有 bin 目录下的 gcc
-            GCC_BIN=$(find $GITHUB_WORKSPACE/kernel_workspace/gcc-64 -path "*/bin/*" -name "*-gcc" -type f 2>/dev/null | head -n 1)
-            if [ -z "$GCC_BIN" ]; then
-                # 更广泛的查找
-                GCC_BIN=$(find $GITHUB_WORKSPACE/kernel_workspace/gcc-64 -name "*-gcc" -type f 2>/dev/null | head -n 1)
-            fi
+            echo "❌ 找不到 aarch64-linux-android-gcc"
+            echo "请检查 gcc-64 目录结构。"
+        exit 1
         fi
-        
-        if [ -z "$GCC_BIN" ]; then
-            echo "❌ 找不到 GCC 编译器！请检查上面输出的目录内容。"
-            exit 1
-        else
-            echo "✅ 使用 GCC 编译器: $GCC_BIN"
-        fi
-        
-        # 添加 GCC bin 目录到 PATH，以便 ld、objcopy 等工具可用
+        echo "✅ 使用 GCC: $GCC_BIN"
+    
+    # 设置环境变量
         GCC_BIN_DIR=$(dirname "$GCC_BIN")
-        export PATH=$GCC_BIN_DIR:$PATH
-        
+        export PATH="$GCC_BIN_DIR:$PATH"
+        export CROSS_COMPILE="${GCC_BIN_DIR}/aarch64-linux-android-"
+    
         export KBUILD_BUILD_HOST=Github-Action
         export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
         if [ ! -z ${{ env.KSU_EXPECTED_SIZE }} ] && [ ! -z ${{ env.KSU_EXPECTED_HASH }} ]; then
           export KSU_EXPECTED_SIZE=${{ env.KSU_EXPECTED_SIZE }}
           export KSU_EXPECTED_HASH=${{ env.KSU_EXPECTED_HASH }}
         fi
-        
-        # 配置阶段
+    
+    # 配置阶段（移除 ${{ env.GCC_64 }}，因为我们已经设置了 CROSS_COMPILE）
         echo "⚙️ 配置内核..."
-        make -j$(nproc --all) O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.GCC_64 }} ${{ env.GCC_32 }} ${{ env.KERNEL_CONFIG }}
-        
-        # 编译阶段
+        make -j$(nproc --all) O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.GCC_32 }} ${{ env.KERNEL_CONFIG }}
+    
+    # 编译阶段
         echo "🔨 编译内核..."
         if [ ${{ env.ENABLE_CCACHE }} = true ]; then
-            make -j$(nproc --all) CC="ccache $GCC_BIN" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.GCC_64 }} ${{ env.GCC_32 }}
+            make -j$(nproc --all) CC="ccache $GCC_BIN" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.GCC_32 }}
         else
-            make -j$(nproc --all) CC="$GCC_BIN" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.GCC_64 }} ${{ env.GCC_32 }}
+            make -j$(nproc --all) CC="$GCC_BIN" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.GCC_32 }}
         fi
 
     # ---------- 后续上传等步骤保持不变 ----------
