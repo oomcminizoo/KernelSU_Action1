@@ -120,13 +120,12 @@ jobs:
       if: env.ENABLE_KERNELSU == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        # 克隆 ReSukiSU 源码到 drivers/kernelsu（不使用 setup.sh）
         git clone --depth 1 https://github.com/ReSukiSU/ReSukiSU -b ${{ env.KERNELSU_TAG }} drivers/kernelsu
         KSU_VERSION=$(cd drivers/kernelsu && expr $(/usr/bin/git rev-list --count HEAD) + 10200 2>/dev/null || echo 0)
         echo "UPLOADNAME=-KernelSU_$KSU_VERSION" >> $GITHUB_ENV
 
     # ============================================================
-    # 修改2: Setup Configuration for Kernel（合并所有配置修改）
+    # 修改2: Setup Configuration for Kernel（保留原有 + 新增 MANUAL_HOOK）
     # ============================================================
     - name: Setup Configuration for Kernel
       run: |
@@ -178,17 +177,7 @@ jobs:
         echo "# CONFIG_CORESIGHT is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_CORESIGHT_ETM4X is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
 
-        # ---- 新增：禁用有问题的摄像头驱动（避免链接错误） ----
-        echo "🔧 禁用摄像头 actuator/ois 驱动以避免链接错误"
-        sed -i 's/CONFIG_VIDEO_CAMERA_ACTUATOR=y/# CONFIG_VIDEO_CAMERA_ACTUATOR is not set/' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
-        sed -i 's/CONFIG_VIDEO_CAMERA_OIS=y/# CONFIG_VIDEO_CAMERA_OIS is not set/' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
-        # 如果上面没有匹配，直接追加一行关闭（确保万无一失）
-        if ! grep -q "CONFIG_VIDEO_CAMERA_ACTUATOR" arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}; then
-            echo "# CONFIG_VIDEO_CAMERA_ACTUATOR is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
-        fi
-        if ! grep -q "CONFIG_VIDEO_CAMERA_OIS" arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}; then
-            echo "# CONFIG_VIDEO_CAMERA_OIS is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
-        fi
+        # 注意：摄像头驱动的禁用已移至 Build kernel 步骤（在 defconfig 后操作）
 
     # ============================================================
     # 修改3: 自动应用 ReSukiSU 手动钩子
@@ -284,7 +273,7 @@ jobs:
         max-size: 2G
 
     # ============================================================
-    # 修改4: Build kernel - 保持不变
+    # 修改4: Build kernel - 在 defconfig 后禁用摄像头驱动
     # ============================================================
     - name: Build kernel
       run: |
@@ -302,6 +291,14 @@ jobs:
 
         echo "⚙️ 配置内核..."
         make -j$(nproc --all) O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.KERNEL_CONFIG }}
+
+        # ===== 在生成 .config 后立即禁用摄像头驱动 =====
+        echo "🔧 禁用摄像头 actuator/ois 驱动以避免链接错误..."
+        scripts/config --file out/.config --disable VIDEO_CAMERA_ACTUATOR
+        scripts/config --file out/.config --disable VIDEO_CAMERA_OIS
+        # 额外安全措施：如果上述选项不存在，用 sed 强制注释
+        sed -i 's/^CONFIG_VIDEO_CAMERA_ACTUATOR=.*/# CONFIG_VIDEO_CAMERA_ACTUATOR is not set/' out/.config
+        sed -i 's/^CONFIG_VIDEO_CAMERA_OIS=.*/# CONFIG_VIDEO_CAMERA_OIS is not set/' out/.config
 
         echo "🔨 编译内核..."
         if [ ${{ env.ENABLE_CCACHE }} = true ]; then
