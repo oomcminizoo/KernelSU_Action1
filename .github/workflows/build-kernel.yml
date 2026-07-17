@@ -86,7 +86,7 @@ jobs:
         sudo apt-get install git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python2 python3
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
-    # -------- GCC 工具链下载（必须） --------
+    # -------- 下载 GCC 工具链（只保留 64 位，如果你需要 32 位可保留） --------
     - name: Download GCC (AOSP)
       if: env.USE_CUSTOM_GCC_64 != 'true' || env.USE_CUSTOM_GCC_32 != 'true'
       run: |
@@ -95,7 +95,8 @@ jobs:
             mkdir -p gcc-64
             wget -O gcc-aarch64.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
             tar -C gcc-64/ -zxvf gcc-aarch64.tar.gz
-            echo "GCC_64=CROSS_COMPILE=$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin/aarch64-linux-android-" >> $GITHUB_ENV
+            # 注意：此变量将不再使用，但保留以避免其他步骤报错
+            echo "GCC_64=CROSS_COMPILE=$GITHUB_WORKSPACE/kernel_workspace/gcc-64/aarch64-linux-android/bin/aarch64-linux-android-" >> $GITHUB_ENV
         fi
         if [ ${{ env.ENABLE_GCC_ARM32 }} = true ]; then
             mkdir -p gcc-32
@@ -104,7 +105,6 @@ jobs:
             echo "GCC_32=CROSS_COMPILE_ARM32=$GITHUB_WORKSPACE/kernel_workspace/gcc-32/bin/arm-linux-androideabi-" >> $GITHUB_ENV
         fi
 
-    # 如果使用自定义 GCC，则执行下面的步骤（根据配置决定）
     - name: Download Custom GCC
       if: env.USE_CUSTOM_GCC_64 == 'true' || env.USE_CUSTOM_GCC_32 == 'true'
       run: |
@@ -214,41 +214,44 @@ jobs:
         key: build-kernel-${{ env.DEVICE }}${{ env.LOCALVERSION }}${{ env.UPLOADNAME }}-gcc
         max-size: 2G
 
-    # ---------- 核心编译步骤（智能定位 GCC） ----------
+    # ---------- 核心编译步骤（写死正确路径） ----------
     - name: Build kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-    
-        # ----- 智能定位 GCC（写死两个候选路径） -----
-        GCC_BIN=""
-        if [ -f "$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin/aarch64-linux-android-gcc" ]; then
+        
+        # 直接指定 GCC 路径（根据 ls 结果写死）
+        GCC_BIN="$GITHUB_WORKSPACE/kernel_workspace/gcc-64/aarch64-linux-android/bin/aarch64-linux-android-gcc"
+        
+        # 检查文件是否存在，若不存在则尝试另一个可能位置
+        if [ ! -f "$GCC_BIN" ]; then
+            echo "⚠️ 未在预期位置找到 gcc，尝试 bin/ 目录..."
             GCC_BIN="$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin/aarch64-linux-android-gcc"
-        elif [ -f "$GITHUB_WORKSPACE/kernel_workspace/gcc-64/aarch64-linux-android/bin/aarch64-linux-android-gcc" ]; then
-            GCC_BIN="$GITHUB_WORKSPACE/kernel_workspace/gcc-64/aarch64-linux-android/bin/aarch64-linux-android-gcc"
-        else
-            echo "❌ 找不到 aarch64-linux-android-gcc"
-            echo "请检查 gcc-64 目录结构。"
-        exit 1
+            if [ ! -f "$GCC_BIN" ]; then
+                echo "❌ 找不到 aarch64-linux-android-gcc，请检查目录"
+                exit 1
+            fi
         fi
         echo "✅ 使用 GCC: $GCC_BIN"
-    
-    # 设置环境变量
+        
+        # 获取 bin 目录并设置 PATH
         GCC_BIN_DIR=$(dirname "$GCC_BIN")
         export PATH="$GCC_BIN_DIR:$PATH"
+        
+        # 设置 CROSS_COMPILE 前缀（这里使用的是 - 结尾）
         export CROSS_COMPILE="${GCC_BIN_DIR}/aarch64-linux-android-"
-    
+        
         export KBUILD_BUILD_HOST=Github-Action
         export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
         if [ ! -z ${{ env.KSU_EXPECTED_SIZE }} ] && [ ! -z ${{ env.KSU_EXPECTED_HASH }} ]; then
           export KSU_EXPECTED_SIZE=${{ env.KSU_EXPECTED_SIZE }}
           export KSU_EXPECTED_HASH=${{ env.KSU_EXPECTED_HASH }}
         fi
-    
-    # 配置阶段（移除 ${{ env.GCC_64 }}，因为我们已经设置了 CROSS_COMPILE）
+        
+        # 配置阶段（不再使用 ${{ env.GCC_64 }}，而是用我们自己的 CROSS_COMPILE）
         echo "⚙️ 配置内核..."
         make -j$(nproc --all) O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.GCC_32 }} ${{ env.KERNEL_CONFIG }}
-    
-    # 编译阶段
+        
+        # 编译阶段
         echo "🔨 编译内核..."
         if [ ${{ env.ENABLE_CCACHE }} = true ]; then
             make -j$(nproc --all) CC="ccache $GCC_BIN" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.GCC_32 }}
@@ -256,7 +259,7 @@ jobs:
             make -j$(nproc --all) CC="$GCC_BIN" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.GCC_32 }}
         fi
 
-    # ---------- 后续上传等步骤保持不变 ----------
+    # ---------- 后续步骤保持不变 ----------
     - name: Check a kernel output files
       run: |
        cd $GITHUB_WORKSPACE/kernel_workspace
