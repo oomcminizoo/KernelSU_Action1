@@ -181,6 +181,11 @@ jobs:
         # 配置阶段
         echo "⚙️ 配置内核..."
         make -j$(nproc --all) O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.KERNEL_CONFIG }}
+
+        echo "🔧 禁用 CONFIG_PFK 和 CONFIG_SECURITY_PFK"
+        sed -i 's/^CONFIG_PFK=y/# CONFIG_PFK is not set/' out/.config
+        sed -i 's/^CONFIG_SECURITY_PFK=y/# CONFIG_SECURITY_PFK is not set/' out/.config
+        make -j$(nproc --all) O=out ARCH=${{ env.ARCH }} olddefconfig
         
         # 编译阶段
         echo "🔨 编译内核..."
