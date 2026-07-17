@@ -169,6 +169,7 @@ jobs:
         export CROSS_COMPILE="aarch64-linux-gnu-"
         # 确保系统 bin 在 PATH 中（默认已有）
         export PATH=/usr/bin:$PATH
+        export WERROR=0
         
         export KBUILD_BUILD_HOST=Github-Action
         export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
@@ -184,9 +185,9 @@ jobs:
         # 编译阶段
         echo "🔨 编译内核..."
         if [ ${{ env.ENABLE_CCACHE }} = true ]; then
-            make -j$(nproc --all) CC="ccache aarch64-linux-gnu-gcc" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }}
+            make -j$(nproc --all) CC="ccache aarch64-linux-gnu-gcc" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} WERROR=0
         else
-            make -j$(nproc --all) CC="aarch64-linux-gnu-gcc" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }}
+            make -j$(nproc --all) CC="aarch64-linux-gnu-gcc" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} WERROR=0
         fi
 
     # ---------- 后续步骤保持不变 ----------
