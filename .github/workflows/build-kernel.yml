@@ -120,12 +120,13 @@ jobs:
       if: env.ENABLE_KERNELSU == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        # 克隆 ReSukiSU 源码到 drivers/kernelsu（不使用 setup.sh）
         git clone --depth 1 https://github.com/ReSukiSU/ReSukiSU -b ${{ env.KERNELSU_TAG }} drivers/kernelsu
         KSU_VERSION=$(cd drivers/kernelsu && expr $(/usr/bin/git rev-list --count HEAD) + 10200 2>/dev/null || echo 0)
         echo "UPLOADNAME=-KernelSU_$KSU_VERSION" >> $GITHUB_ENV
 
     # ============================================================
-    # 修改2: Setup Configuration for Kernel（保留原有 + 新增修复）
+    # 修改2: Setup Configuration for Kernel（合并所有配置修改）
     # ============================================================
     - name: Setup Configuration for Kernel
       run: |
@@ -176,6 +177,18 @@ jobs:
         echo "# CONFIG_SECURITY_PFK is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_CORESIGHT is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_CORESIGHT_ETM4X is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+
+        # ---- 新增：禁用有问题的摄像头驱动（避免链接错误） ----
+        echo "🔧 禁用摄像头 actuator/ois 驱动以避免链接错误"
+        sed -i 's/CONFIG_VIDEO_CAMERA_ACTUATOR=y/# CONFIG_VIDEO_CAMERA_ACTUATOR is not set/' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        sed -i 's/CONFIG_VIDEO_CAMERA_OIS=y/# CONFIG_VIDEO_CAMERA_OIS is not set/' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        # 如果上面没有匹配，直接追加一行关闭（确保万无一失）
+        if ! grep -q "CONFIG_VIDEO_CAMERA_ACTUATOR" arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}; then
+            echo "# CONFIG_VIDEO_CAMERA_ACTUATOR is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        fi
+        if ! grep -q "CONFIG_VIDEO_CAMERA_OIS" arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}; then
+            echo "# CONFIG_VIDEO_CAMERA_OIS is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        fi
 
     # ============================================================
     # 修改3: 自动应用 ReSukiSU 手动钩子
