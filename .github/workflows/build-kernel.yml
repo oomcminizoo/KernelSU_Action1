@@ -125,6 +125,7 @@ jobs:
     - name: Setup Configuration for Kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        # ===== 原有的 KSU 补丁等修改 =====
         if [ ${{ env.APPLY_KSU_PATCH }} = true ]; then
             bash $GITHUB_WORKSPACE/patches/patches.sh
             if grep -q "CONFIG_KSU" arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}; then
@@ -152,6 +153,11 @@ jobs:
         if [ ${{ env.DISABLE_CC_WERROR }} = true ]; then
             echo "CONFIG_CC_WERROR=n" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         fi
+        # ===== 新增：禁用 PFK 和 Coresight =====
+        echo "# CONFIG_PFK is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        echo "# CONFIG_SECURITY_PFK is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        echo "# CONFIG_CORESIGHT is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        echo "# CONFIG_CORESIGHT_ETM4X is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
 
     - name: Setup ccache
       if: env.ENABLE_CCACHE == 'true'
@@ -160,16 +166,12 @@ jobs:
         key: build-kernel-${{ env.DEVICE }}${{ env.LOCALVERSION }}${{ env.UPLOADNAME }}-gcc-system
         max-size: 2G
 
-    # ---------- 核心编译步骤（使用系统 GCC） ----------
     - name: Build kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         
-        # 设置交叉编译前缀（系统 GCC 使用 aarch64-linux-gnu-）
         export CROSS_COMPILE="aarch64-linux-gnu-"
-        # 确保系统 bin 在 PATH 中（默认已有）
         export PATH=/usr/bin:$PATH
-        export WERROR=0
         
         export KBUILD_BUILD_HOST=Github-Action
         export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
@@ -181,21 +183,15 @@ jobs:
         # 配置阶段
         echo "⚙️ 配置内核..."
         make -j$(nproc --all) O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.KERNEL_CONFIG }}
-
-        echo "🔧 禁用 CONFIG_PFK 和 CONFIG_SECURITY_PFK"
-        sed -i 's/^CONFIG_PFK=y/# CONFIG_PFK is not set/' out/.config
-        sed -i 's/^CONFIG_SECURITY_PFK=y/# CONFIG_SECURITY_PFK is not set/' out/.config
-        make -j$(nproc --all) O=out ARCH=${{ env.ARCH }} olddefconfig
         
         # 编译阶段
         echo "🔨 编译内核..."
         if [ ${{ env.ENABLE_CCACHE }} = true ]; then
-            make -j$(nproc --all) CC="ccache aarch64-linux-gnu-gcc" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} WERROR=0
+            make -j$(nproc --all) CC="ccache aarch64-linux-gnu-gcc" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }}
         else
-            make -j$(nproc --all) CC="aarch64-linux-gnu-gcc" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} WERROR=0
+            make -j$(nproc --all) CC="aarch64-linux-gnu-gcc" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }}
         fi
 
-    # ---------- 后续步骤保持不变 ----------
     - name: Check a kernel output files
       run: |
        cd $GITHUB_WORKSPACE/kernel_workspace
