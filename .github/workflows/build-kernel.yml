@@ -92,13 +92,13 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         if [ ${{ env.ENABLE_GCC_ARM64 }} = true ]; then
-            mkdir gcc-64
+            mkdir -p gcc-64
             wget -O gcc-aarch64.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
             tar -C gcc-64/ -zxvf gcc-aarch64.tar.gz
             echo "GCC_64=CROSS_COMPILE=$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin/aarch64-linux-android-" >> $GITHUB_ENV
         fi
         if [ ${{ env.ENABLE_GCC_ARM32 }} = true ]; then
-            mkdir gcc-32
+            mkdir -p gcc-32
             wget -O gcc-arm.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
             tar -C gcc-32/ -zxvf gcc-arm.tar.gz
             echo "GCC_32=CROSS_COMPILE_ARM32=$GITHUB_WORKSPACE/kernel_workspace/gcc-32/bin/arm-linux-androideabi-" >> $GITHUB_ENV
@@ -219,25 +219,46 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         
+        # 调试：查看 gcc-64 目录内容
+        echo "=== 检查 gcc-64 目录 ==="
+        ls -la $GITHUB_WORKSPACE/kernel_workspace/gcc-64/ || echo "gcc-64 目录不存在"
+        if [ -d "$GITHUB_WORKSPACE/kernel_workspace/gcc-64" ]; then
+            echo "=== 查找 gcc-64/bin 下所有文件 ==="
+            find $GITHUB_WORKSPACE/kernel_workspace/gcc-64 -type f -name "*gcc*" 2>/dev/null || echo "未找到任何 gcc 文件"
+            echo "=== 完整目录树（第一层） ==="
+            ls -la $GITHUB_WORKSPACE/kernel_workspace/gcc-64/
+            if [ -d "$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin" ]; then
+                ls -la $GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin/
+            else
+                echo "bin 子目录不存在，尝试查找任何 bin 目录"
+                find $GITHUB_WORKSPACE/kernel_workspace/gcc-64 -type d -name "bin" 2>/dev/null
+            fi
+        fi
+        
         # 智能定位 GCC 编译器
         GCC_BIN=""
-        # 先尝试标准名称
+        # 尝试标准名称
         if [ -f "$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin/aarch64-linux-android-gcc" ]; then
             GCC_BIN="$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin/aarch64-linux-android-gcc"
         else
-            # 通用查找
-            GCC_BIN=$(find $GITHUB_WORKSPACE/kernel_workspace/gcc-64 -name "*-gcc" -type f | head -n 1)
+            # 尝试查找所有 bin 目录下的 gcc
+            GCC_BIN=$(find $GITHUB_WORKSPACE/kernel_workspace/gcc-64 -path "*/bin/*" -name "*-gcc" -type f 2>/dev/null | head -n 1)
+            if [ -z "$GCC_BIN" ]; then
+                # 更广泛的查找
+                GCC_BIN=$(find $GITHUB_WORKSPACE/kernel_workspace/gcc-64 -name "*-gcc" -type f 2>/dev/null | head -n 1)
+            fi
         fi
         
         if [ -z "$GCC_BIN" ]; then
-            echo "❌ 找不到 GCC 编译器，请检查 Download GCC 步骤"
+            echo "❌ 找不到 GCC 编译器！请检查上面输出的目录内容。"
             exit 1
         else
             echo "✅ 使用 GCC 编译器: $GCC_BIN"
         fi
         
         # 添加 GCC bin 目录到 PATH，以便 ld、objcopy 等工具可用
-        export PATH=$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin:$PATH
+        GCC_BIN_DIR=$(dirname "$GCC_BIN")
+        export PATH=$GCC_BIN_DIR:$PATH
         
         export KBUILD_BUILD_HOST=Github-Action
         export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
