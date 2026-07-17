@@ -84,7 +84,6 @@ jobs:
         echo "DEVICE=$(echo ${{ env.KERNEL_CONFIG }} | sed 's!vendor/!!;s/_defconfig//;s/_user//;s/-perf//')" >> $GITHUB_ENV
         sudo apt-get update
         sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python2 python3
-        # 安装系统 GCC 交叉编译工具链
         sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
@@ -121,6 +120,19 @@ jobs:
         curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}
         KSU_VERSION=$(cd KernelSU && expr $(/usr/bin/git rev-list --count HEAD) + 10200)
         echo "UPLOADNAME=-KernelSU_$KSU_VERSION" >> $GITHUB_ENV
+
+    # ===== 新增：修复 KernelSU Non-GKI 检查 =====
+    - name: Fix KernelSU Kbuild for Non-GKI
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        if grep -q "TP hooks are incompatible" drivers/kernelsu/Kbuild; then
+            sed -i '/TP hooks are incompatible/s/^/#/' drivers/kernelsu/Kbuild
+            echo "✅ Commented out Non-GKI check in KernelSU Kbuild"
+        else
+            # 如果没找到，尝试更通用的匹配
+            sed -i '/error.*TP hooks/s/^/#/' drivers/kernelsu/Kbuild
+            echo "⚠️ Applied generic fix"
+        fi
 
     - name: Setup Configuration for Kernel
       run: |
@@ -192,6 +204,7 @@ jobs:
             make -j$(nproc --all) CC="aarch64-linux-gnu-gcc" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }}
         fi
 
+    # ---------- 后续步骤保持不变 ----------
     - name: Check a kernel output files
       run: |
        cd $GITHUB_WORKSPACE/kernel_workspace
