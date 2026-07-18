@@ -112,8 +112,8 @@ jobs:
             echo "HAVE_SOURCE_BOOT_IMAGE=true" >> $GITHUB_ENV
         fi
 
-    # ============================================================
-    # 1. Setup KernelSU - 直接克隆源码
+     # ============================================================
+    # 1. Setup KernelSU - 直接克隆源码（不使用 setup.sh）
     # ============================================================
     - name: Setup KernelSU
       if: env.ENABLE_KERNELSU == 'true'
@@ -122,14 +122,12 @@ jobs:
         git clone --depth 1 https://github.com/ReSukiSU/ReSukiSU -b ${{ env.KERNELSU_TAG }} drivers/kernelsu
         KSU_VERSION=$(cd drivers/kernelsu && expr $(/usr/bin/git rev-list --count HEAD) + 10200 2>/dev/null || echo 0)
         echo "UPLOADNAME=-KernelSU_$KSU_VERSION" >> $GITHUB_ENV
-
     # ============================================================
-    # 2. Setup Configuration for Kernel
+    # 2. Setup Configuration for Kernel（包含所有配置修改）
     # ============================================================
     - name: Setup Configuration for Kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        
         # ---- 原有 KSU 补丁逻辑 ----
         if [ ${{ env.APPLY_KSU_PATCH }} = true ]; then
             bash $GITHUB_WORKSPACE/patches/patches.sh
@@ -140,7 +138,6 @@ jobs:
                 echo "CONFIG_KSU=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
             fi
         fi
-        
         # ---- 手动钩子开启 ----
         if [ ${{ env.ENABLE_KERNELSU }} = true ]; then
             if ! grep -q "CONFIG_KSU_MANUAL_HOOK" arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}; then
@@ -149,7 +146,7 @@ jobs:
                 sed -i 's/CONFIG_KSU_MANUAL_HOOK=.*/CONFIG_KSU_MANUAL_HOOK=y/g' arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
             fi
         fi
-        
+        # ⚠️ 注释掉了原先手动塞入的冲突配置，从根本上解决 multiple definition 冲突
         # ---- 原有其他配置 ----
         if [ ${{ env.ADD_KPROBES_CONFIG }} = true -a ${{ env.APPLY_KSU_PATCH }} != true ]; then
             echo "CONFIG_MODULES=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
@@ -169,13 +166,11 @@ jobs:
         if [ ${{ env.DISABLE_CC_WERROR }} = true ]; then
             echo "CONFIG_CC_WERROR=n" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         fi
-        
         # ---- 禁用 PFK 和 Coresight 避免 warning ----
         echo "# CONFIG_PFK is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_SECURITY_PFK is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_CORESIGHT is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_CORESIGHT_ETM4X is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
-
     # ============================================================
     # 3. 自动应用 ReSukiSU 手动钩子
     # ============================================================
@@ -183,14 +178,64 @@ jobs:
       if: env.ENABLE_KERNELSU == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        sed -i '/SYSCALL_DEFINE4(newfstatat/,/^}/ {          /vfs_fstatat/i\        #ifdef CONFIG_KSU_MANUAL_HOOK\        \tksu_handle_stat(&dfd, &filename, &flag);\        #endif        }' fs/stat.c
-        sed -i '/SYSCALL_DEFINE2(newfstat/,/^}/ {          /return error;/i\        #ifdef CONFIG_KSU_MANUAL_HOOK\        \tksu_handle_newfstat_ret(&fd, &statbuf);\        #endif        }' fs/stat.c
-        sed -i '/int do_execve(struct filename \*filename/,/^}/ {          /struct user_arg_ptr envp =/a\        #ifdef CONFIG_KSU_MANUAL_HOOK\        \tksu_handle_execve((int *)AT_FDCWD, &filename, &argv, &envp, 0);\        #endif        }' fs/exec.c
-        sed -i '/SYSCALL_DEFINE3(faccessat/,/^}/ {          /do_faccessat/i\        #ifdef CONFIG_KSU_MANUAL_HOOK\        \tksu_handle_faccessat(&dfd, &filename, &mode, NULL);\        #endif        }' fs/open.c
-        sed -i '/SYSCALL_DEFINE4(reboot/,/^}/ {          /mutex_lock/i\        #ifdef CONFIG_KSU_MANUAL_HOOK\        \tksu_handle_sys_reboot(magic1, magic2, cmd, &arg);\        #endif        }' kernel/reboot.c
-        sed -i '/void input_event(struct input_dev \*dev/,/^}/ {          /unsigned long flags;/a\        #ifdef CONFIG_KSU_MANUAL_HOOK\        \tif (unlikely(ksu_input_hook))\        \t\tksu_handle_input_handle_event(&type, &code, &value);\        #endif        }' drivers/input/input.c
-        sed -i '/SYSCALL_DEFINE3(setresuid/,/^}/ {          /make_kuid/i\        #ifdef CONFIG_KSU_MANUAL_HOOK\        \t(void)ksu_handle_setresuid(ruid, euid, suid);\        #endif        }' kernel/sys.c
-        sed -i '/SYSCALL_DEFINE3(read/,/^}/ {          /ksys_read/i\        #ifdef CONFIG_KSU_MANUAL_HOOK\        \tif (unlikely(ksu_init_rc_hook))\        \t\tksu_handle_sys_read(fd, &buf, &count);\        #endif        }' fs/read_write.c
+        # ---- fs/stat.c ----
+        sed -i '/SYSCALL_DEFINE4(newfstatat/,/^}/ {
+          /vfs_fstatat/i\
+        #ifdef CONFIG_KSU_MANUAL_HOOK\
+        \tksu_handle_stat(&dfd, &filename, &flag);\
+        #endif
+        }' fs/stat.c
+        sed -i '/SYSCALL_DEFINE2(newfstat/,/^}/ {
+          /return error;/i\
+        #ifdef CONFIG_KSU_MANUAL_HOOK\
+        \tksu_handle_newfstat_ret(&fd, &statbuf);\
+        #endif
+        }' fs/stat.c
+        # ---- fs/exec.c ----
+        sed -i '/int do_execve(struct filename \*filename/,/^}/ {
+          /struct user_arg_ptr envp =/a\
+        #ifdef CONFIG_KSU_MANUAL_HOOK\
+        \tksu_handle_execve((int *)AT_FDCWD, &filename, &argv, &envp, 0);\
+        #endif
+        }' fs/exec.c
+        # ---- fs/open.c ----
+        sed -i '/SYSCALL_DEFINE3(faccessat/,/^}/ {
+          /do_faccessat/i\
+        #ifdef CONFIG_KSU_MANUAL_HOOK\
+        \tksu_handle_faccessat(&dfd, &filename, &mode, NULL);\
+        #endif
+        }' fs/open.c
+        # ---- kernel/reboot.c ----
+        sed -i '/SYSCALL_DEFINE4(reboot/,/^}/ {
+          /mutex_lock/i\
+        #ifdef CONFIG_KSU_MANUAL_HOOK\
+        \tksu_handle_sys_reboot(magic1, magic2, cmd, &arg);\
+        #endif
+        }' kernel/reboot.c
+        # ---- drivers/input/input.c ----
+        sed -i '/void input_event(struct input_dev \*dev/,/^}/ {
+          /unsigned long flags;/a\
+        #ifdef CONFIG_KSU_MANUAL_HOOK\
+        \tif (unlikely(ksu_input_hook))\
+        \t\tksu_handle_input_handle_event(&type, &code, &value);\
+        #endif
+        }' drivers/input/input.c
+        # ---- kernel/sys.c ----
+        sed -i '/SYSCALL_DEFINE3(setresuid/,/^}/ {
+          /make_kuid/i\
+        #ifdef CONFIG_KSU_MANUAL_HOOK\
+        \t(void)ksu_handle_setresuid(ruid, euid, suid);\
+        #endif
+        }' kernel/sys.c
+        # ---- fs/read_write.c ----
+        sed -i '/SYSCALL_DEFINE3(read/,/^}/ {
+          /ksys_read/i\
+        #ifdef CONFIG_KSU_MANUAL_HOOK\
+        \tif (unlikely(ksu_init_rc_hook))\
+        \t\tksu_handle_sys_read(fd, &buf, &count);\
+        #endif
+        }' fs/read_write.c
+        # ---- 导出静态符号 ----
         sed -i 's/^static ssize_t (\*write_op\[\])/ssize_t (*write_op[])/' security/selinux/selinuxfs.c
         sed -i 's/^static const struct file_operations sel_handle_status_ops/const struct file_operations sel_handle_status_ops/' security/selinux/selinuxfs.c
         sed -i 's/^static struct page \*selinux_status_page;/struct page *selinux_status_page;/' security/selinux/ss/services.c
@@ -201,7 +246,7 @@ jobs:
         sed -i 's/^static void security_dump_masked_av(/void security_dump_masked_av(/' security/selinux/ss/services.c
         sed -i 's/^static void context_struct_compute_av(/void context_struct_compute_av(/' security/selinux/ss/services.c
         echo "✅ ReSukiSU manual hooks applied"
-
+        
     - name: Setup ccache
       if: env.ENABLE_CCACHE == 'true'
       uses: hendrikmuhs/ccache-action@v1.2
