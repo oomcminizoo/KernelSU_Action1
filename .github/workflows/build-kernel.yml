@@ -254,21 +254,18 @@ jobs:
         # [修复 5] Fscrypt 链接阶段 (LD) 硬解加密未定义引用全局强导
         GLOBAL_STUB_SRC="drivers/soc/qcom/pfk/pfk_fscrypt.c"
         if [ -f "$GLOBAL_STUB_SRC" ]; then
-          cat << 'EOF' >> "$GLOBAL_STUB_SRC"
-
-/* ===== 全局强行导出链接期缺少的 fscrypt 符号 ===== */
-#include <linux/bio.h>
-#include <linux/export.h>
-
-void fscrypt_set_bio_crypt_ctx(struct bio *bio, const struct inode *inode, u64 first_lblk, gfp_t gfp_mask) { }
-EXPORT_SYMBOL(fscrypt_set_bio_crypt_ctx);
-
-bool fscrypt_mergeable_bio(struct bio *bio, const struct inode *inode, u64 next_lblk) { return true; }
-EXPORT_SYMBOL(fscrypt_mergeable_bio);
-
-bool fscrypt_using_hardware_encryption(const struct inode *inode) { return false; }
-EXPORT_SYMBOL(fscrypt_using_hardware_encryption);
-EOF
+          echo "🛠️ 正在全局补全并强导 fscrypt 符号..."
+          # 使用纯 echo 逐行写入，避免 EOF 缩进陷阱
+          echo "" >> "$GLOBAL_STUB_SRC"
+          echo "/* 全局强行导出链接期缺少的 fscrypt 符号 */" >> "$GLOBAL_STUB_SRC"
+          echo "#include <linux/bio.h>" >> "$GLOBAL_STUB_SRC"
+          echo "#include <linux/export.h>" >> "$GLOBAL_STUB_SRC"
+          echo "void fscrypt_set_bio_crypt_ctx(struct bio *bio, const struct inode *inode, u64 first_lblk, gfp_t gfp_mask) { }" >> "$GLOBAL_STUB_SRC"
+          echo "EXPORT_SYMBOL(fscrypt_set_bio_crypt_ctx);" >> "$GLOBAL_STUB_SRC"
+          echo "bool fscrypt_mergeable_bio(struct bio *bio, const struct inode *inode, u64 next_lblk) { return true; }" >> "$GLOBAL_STUB_SRC"
+          echo "EXPORT_SYMBOL(fscrypt_mergeable_bio);" >> "$GLOBAL_STUB_SRC"
+          echo "bool fscrypt_using_hardware_encryption(const struct inode *inode) { return false; }" >> "$GLOBAL_STUB_SRC"
+          echo "EXPORT_SYMBOL(fscrypt_using_hardware_encryption);" >> "$GLOBAL_STUB_SRC"
         fi
 
         # [修复 6] Coresight ETM_ARCH_V4 宏缺失
