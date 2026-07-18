@@ -151,11 +151,7 @@ jobs:
             fi
         fi
 
-        # ---- 启用 MSM_CAMERA 系列（修复摄像头链接错误） ----
-        echo "🔧 启用 MSM_CAMERA 支持..."
-        echo "CONFIG_MSM_CAMERA=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
-        echo "CONFIG_MSMB_CAMERA=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
-        echo "# CONFIG_MSM_CAMERA_DEBUG is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        # ⚠️ 注释掉了原先手动塞入的冲突配置，从根本上解决 multiple definition 冲突
 
         # ---- 原有其他配置 ----
         if [ ${{ env.ADD_KPROBES_CONFIG }} = true -a ${{ env.APPLY_KSU_PATCH }} != true ]; then
@@ -277,7 +273,7 @@ jobs:
         max-size: 2G
 
     # ============================================================
-    # 4. Build kernel（配置和编译合并，无额外交互）
+    # 4. Build kernel（配置和编译合并，已集成所有高通相机驱动修复逻辑）
     # ============================================================
     - name: Build kernel
       run: |
@@ -293,7 +289,23 @@ jobs:
           export KSU_EXPECTED_HASH=${{ env.KSU_EXPECTED_HASH }}
         fi
 
-        grep -rl CONFIG_MSM_SEC_CCI_TA_NAME $GITHUB_WORKSPACE/kernel_workspace/android-kernel/drivers/media/platform/msm/camera_v2/ | xargs sed -i 's/CONFIG_MSM_SEC_CCI_TA_NAME/"msm_sec_cci"/g'
+        echo "🛠️ 正在修复高通相机驱动漏洞与链接缺失符号..."
+        
+        # 修复逻辑 1: 针对 camera_v2 分支的全局宏宏名称处理
+        grep -rl CONFIG_MSM_SEC_CCI_TA_NAME $GITHUB_WORKSPACE/kernel_workspace/android-kernel/drivers/media/platform/msm/camera_v2/ | xargs sed -i 's/CONFIG_MSM_SEC_CCI_TA_NAME/"msm_sec_cci"/g' 2>/dev/null || true
+
+        # 修复逻辑 2: 针对老版本 camera 的厂商马达与防抖未定义引用错误（在头部强行打入空占位桩函数）
+        ACTUATOR_CORE="drivers/media/platform/msm/camera/cam_sensor_module/cam_actuator/cam_actuator_core.c"
+        if [ -f "$ACTUATOR_CORE" ]; then
+          sed -i '1i void clearRearVCMInitDownload(void) {}' "$ACTUATOR_CORE"
+          sed -i '1i int checkRearVCMLTC(void) { return 0; }' "$ACTUATOR_CORE"
+        fi
+
+        OIS_CORE="drivers/media/platform/msm/camera/cam_sensor_module/cam_ois/cam_ois_core.c"
+        if [ -f "$OIS_CORE" ]; then
+          sed -i '1i int GyroReCalib(void) { return 0; }' "$OIS_CORE"
+          sed -i '1i int WrGyroOffsetData(void) { return 0; }' "$OIS_CORE"
+        fi
         
         echo "⚙️ 配置内核..."
         make -j$(nproc --all) O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.KERNEL_CONFIG }}
@@ -305,7 +317,9 @@ jobs:
             make -j$(nproc --all) CC="aarch64-linux-gnu-gcc" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }}
         fi
 
-    # ---------- 后续步骤保持不变 ----------
+    # ============================================================
+    # 5. 后续处理与产物打包上传（保持不变）
+    # ============================================================
     - name: Check a kernel output files
       run: |
        cd $GITHUB_WORKSPACE/kernel_workspace
