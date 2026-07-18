@@ -225,54 +225,58 @@ jobs:
 
     - name: Patch Kernel Sources (Fix Camera, PFK & Coresight)
       run: |
-        cd kernel_workspace/android-kernel
-        
-        # ==========================================
-        # 1. 修复前面遇到的相机驱动 (cam_ois_core.c) 签名冲突
-        # ==========================================
-        OIS_CORE="drivers/media/platform/msm/camera/cam_sensor_module/cam_ois/cam_ois_core.c"
-        if [ -f "$OIS_CORE" ]; then
-          echo "🛠️ 正在修复 cam_ois_core.c 的陀螺仪函数..."
-          # 声明可能用到的结构体，防止未定义报错
-          sed -i '1i struct camera_io_master; typedef struct STRECALIB stReCalib;' "$OIS_CORE"
-          # 在文件末尾追加各自完美的桩函数主体
-          echo -e "\nint GyroReCalib(struct camera_io_master *io_master_info, stReCalib *recal_data) { return 0; }" >> "$OIS_CORE"
-          echo -e "\nint WrGyroOffsetData(void) { return 0; }" >> "$OIS_CORE"
-        fi
+          cd kernel_workspace/android-kernel
+          
+          # ==========================================
+          # 1. 修复前面遇到的相机驱动 (cam_ois_core.c) 签名冲突
+          # ==========================================
+          OIS_CORE="drivers/media/platform/msm/camera/cam_sensor_module/cam_ois/cam_ois_core.c"
+          if [ -f "$OIS_CORE" ]; then
+            echo "🛠️ 正在修复 cam_ois_core.c 的陀螺仪函数..."
+            # 声明可能用到的结构体，防止未定义报错
+            sed -i '1i struct camera_io_master; typedef struct STRECALIB stReCalib;' "$OIS_CORE"
+            # 在文件末尾追加各自完美的桩函数主体
+            echo -e "\nint GyroReCalib(struct camera_io_master *io_master_info, stReCalib *recal_data) { return 0; }" >> "$OIS_CORE"
+            echo -e "\nint WrGyroOffsetData(void) { return 0; }" >> "$OIS_CORE"
+          fi
 
-        # ==========================================
-        # 2. 修复 PFK (pfk_fscrypt.c) 4.9 内核符号缺失
-        # ==========================================
-        PFK_SRC_1="drivers/soc/qcom/pfk/pfk_fscrypt.c"
-        PFK_SRC_2="security/pfe/pfk_fscrypt.c"
-        
-        for PFK_SRC in "$PFK_SRC_1" "$PFK_SRC_2"; do
-          if [ -f "$PFK_SRC" ]; then
-            echo "🛠️ 正在深度修复 $PFK_SRC 及其潜在所有未知参数错误..."
-            # 1. 强制忽略可能重复定义的 pr_fmt 警告
-            sed -i '/#define pr_fmt/d' "$PFK_SRC" 2>/dev/null || true
-            
-            # 2. 顶层注入宏劫持！不管源码里用 2个、3个 还是 4个参数调用，全部强制返回 false
-            #    这样不仅能解决当前的 3参数报错，还能完美预防高通魔改的其他未知参数错误
-            sed -i '1i #include <linux/types.h>\n#include <linux/blkdev.h>\n#ifndef __PFK_HIJACK_H__\n#define __PFK_HIJACK_H__\n#define fscrypt_enc_bio_mergeable(...) (false)\n#endif' "$PFK_SRC"
+          # ==========================================
+          # 2. 修复 PFK (pfk_fscrypt.c) 4.9 内核符号缺失
+          # ==========================================
+          PFK_SRC_1="drivers/soc/qcom/pfk/pfk_fscrypt.c"
+          PFK_SRC_2="security/pfe/pfk_fscrypt.c"
+          
+          for PFK_SRC in "$PFK_SRC_1" "$PFK_SRC_2"; do
+            if [ -f "$PFK_SRC" ]; then
+              echo "🛠️ 正在深度修复 $PFK_SRC 及其潜在所有未知参数错误..."
+              # 1. 强制忽略可能重复定义的 pr_fmt 警告
+              sed -i '/#define pr_fmt/d' "$PFK_SRC" 2>/dev/null || true
+              
+              # 2. 顶层注入宏劫持！不管源码里用 2个、3个 还是 4个参数调用，全部强制返回 false
+              sed -i '1i #include <linux/types.h>\n#include <linux/blkdev.h>\n#ifndef __PFK_HIJACK_H__\n#define __PFK_HIJACK_H__\n#define fscrypt_enc_bio_mergeable(...) (false)\n#endif' "$PFK_SRC"
+            fi
+          done
 
-        # ==========================================
-        # 3. 修复 Coresight (coresight-etm4x.c) 宏定义缺失
-        # ==========================================
-        CORESIGHT_SRC="drivers/hwtracing/coresight/coresight-etm4x.c"
-        if [ -f "$CORESIGHT_SRC" ]; then
-          echo "🛠️ 正在修复 coresight-etm4x.c 的 ETM_ARCH_V4 宏缺失..."
-          # 直接在头部定义这个缺失的宏（4.9 内核新版架构中标准的 ETM_ARCH_V4 值为 0x40）
-          sed -i '1i #ifndef ETM_ARCH_V4\n#define ETM_ARCH_V4 0x40\n#endif' "$CORESIGHT_SRC"
-        fi
-        
-        # ==========================================
-        # 4. 允许整个编译流程忽略高通祖传的代码缩进警告
-        # ==========================================
-        KERNEL_DEFCONFIG="arch/arm64/configs/${{ env.KERNEL_CONFIG }}"
-        if [ -f "$KERNEL_DEFCONFIG" ]; then
-          echo "CONFIG_CC_WERROR=n" >> "$KERNEL_DEFCONFIG"
-        fi
+          # ==========================================
+          # 3. 修复 Coresight (coresight-etm4x.c) 宏定义缺失
+          # ==========================================
+          CORESIGHT_SRC="drivers/hwtracing/coresight/coresight-etm4x.c"
+          if [ -f "$CORESIGHT_SRC" ]; then
+            echo "🛠️ 正在修复 coresight-etm4x.c 的 ETM_ARCH_V4 宏缺失..."
+            # 直接在头部定义这个缺失的宏（4.9 内核新版架构中标准的 ETM_ARCH_V4 值为 0x40）
+            sed -i '1i #ifndef ETM_ARCH_V4\n#define ETM_ARCH_V4 0x40\n#endif' "$CORESIGHT_SRC"
+          fi
+          
+          # ==========================================
+          # 4. 允许整个编译流程忽略高通祖传的代码缩进警告
+          # ==========================================
+          KERNEL_DEFCONFIG="arch/arm64/configs/${{ env.KERNEL_CONFIG }}"
+          if [ -f "$KERNEL_DEFCONFIG" ]; then
+            echo "🛠️ 正在向 defconfig 追加关闭 WERROR 配置..."
+            echo "CONFIG_CC_WERROR=n" >> "$KERNEL_DEFCONFIG"
+          fi
+
+          echo "✅ 源码补丁全部顺利注入完毕！"
 
     - name: Setup ccache
       if: env.ENABLE_CCACHE == 'true'
