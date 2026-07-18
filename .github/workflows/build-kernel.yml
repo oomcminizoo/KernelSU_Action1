@@ -293,7 +293,7 @@ jobs:
           export KSU_EXPECTED_HASH=${{ env.KSU_EXPECTED_HASH }}
         fi
 
-        sed -i 's/CONFIG_MSM_SEC_CCI_TA_NAME/"msm_sec_cci"/g' drivers/media/platform/msm/camera_v2/common/msm_camera_tz_util.c
+        grep -rl CONFIG_MSM_SEC_CCI_TA_NAME $GITHUB_WORKSPACE/kernel_workspace/android-kernel/drivers/media/platform/msm/camera_v2/ | xargs sed -i 's/CONFIG_MSM_SEC_CCI_TA_NAME/"msm_sec_cci"/g'
         
         echo "⚙️ 配置内核..."
         make -j$(nproc --all) O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.KERNEL_CONFIG }}
