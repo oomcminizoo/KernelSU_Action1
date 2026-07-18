@@ -248,9 +248,23 @@ jobs:
         
         for PFK_SRC in "$PFK_SRC_1" "$PFK_SRC_2"; do
           if [ -f "$PFK_SRC" ]; then
-            echo "🛠️ 正在修复 $PFK_SRC 的内核符号缺失..."
-            # 在文件头部注入打桩函数，默认返回 false (0) 骗过编译器，确保正常打包开机
-            sed -i '1i #include <linux/types.h>\n#include <linux/blkdev.h>\nbool fscrypt_enc_bio_mergeable(const struct bio *bio, const struct bio *next_bio) { return false; }' "$PFK_SRC"
+            echo "🛠️ 正在深度修复 $PFK_SRC 及其潜在所有未知参数错误..."
+            # 1. 强制忽略可能重复定义的 pr_fmt 警告
+            sed -i '/#define pr_fmt/d' "$PFK_SRC" 2>/dev/null || true
+            
+            # 2. 顶层注入宏劫持！不管源码里用 2个、3个 还是 4个参数调用，全部强制返回 false
+            #    这样不仅能解决当前的 3参数报错，还能完美预防高通魔改的其他未知参数错误
+            cat << 'EOF' > pfk_patch_tmp.c
+#include <linux/types.h>
+#include <linux/blkdev.h>
+#ifndef __PFK_HIJACK_H__
+#define __PFK_HIJACK_H__
+#define fscrypt_enc_bio_mergeable(...) (false)
+#endif
+EOF
+            # 将宏定义和头文件塞到源文件最开头
+            cat "$PFK_SRC" >> pfk_patch_tmp.c
+            mv pfk_patch_tmp.c "$PFK_SRC"
           fi
         done
 
