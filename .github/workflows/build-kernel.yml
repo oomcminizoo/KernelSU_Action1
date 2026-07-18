@@ -300,10 +300,14 @@ jobs:
           sed -i '1i struct camera_io_master; void clearRearVCMInitDownload(struct camera_io_master *io_info) { return; } int checkRearVCMLTC(struct camera_io_master *io_info) { return 0; }' "$ACTUATOR_CORE"
         fi
 
+        #  修正后的代码：通过引入头文件并追加到末尾，完美适配任何复杂的参数签名
         OIS_CORE="drivers/media/platform/msm/camera/cam_sensor_module/cam_ois/cam_ois_core.c"
         if [ -f "$OIS_CORE" ]; then
-          sed -i '1i int GyroReCalib(void) { return 0; }' "$OIS_CORE"
-          sed -i '1i int WrGyroOffsetData(void) { return 0; }' "$OIS_CORE"
+          echo "🛠️ 正在精准修复 cam_ois_core.c 的陀螺仪函数签名..."
+          # 1. 在文件头部引入包含正确声明的头文件
+          sed -i '1i #include "../cam_fw_update/fw_update.h"' "$OIS_CORE"
+          echo -e "\nint GyroReCalib(struct camera_io_master *io_master_info, stReCalib *recal_data) { return 0; }" >> "$OIS_CORE"
+          echo -e "\nint WrGyroOffsetData(struct camera_io_master *io_master_info, void *data) { return 0; }" >> "$OIS_CORE"
         fi
         
         echo "⚙️ 配置内核..."
