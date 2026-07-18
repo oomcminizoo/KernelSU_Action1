@@ -243,13 +243,16 @@ jobs:
         # ==========================================
         # 2. 修复 PFK (pfk_fscrypt.c) 4.9 内核符号缺失
         # ==========================================
-        PFK_SRC="drivers/soc/qcom/pfk/pfk_fscrypt.c"
-        if [ -f "$PFK_SRC" ]; then
-          echo "🛠️ 正在修复 pfk_fscrypt.c 的内核 4.9 符号缺失..."
-          # 在该文件头部直接打桩一个临时的 fscrypt_enc_bio_mergeable 函数，让它默认返回 false (0)
-          # 这样既能骗过编译器，又能完整保留 PFK 核心解密链条，确保系统正常开机解密
-          sed -i '1i #include <linux/types.h>\n#include <linux/blkdev.h>\nbool fscrypt_enc_bio_mergeable(const struct bio *bio, const struct bio *next_bio) { return false; }' "$PFK_SRC"
-        fi
+        PFK_SRC_1="drivers/soc/qcom/pfk/pfk_fscrypt.c"
+        PFK_SRC_2="security/pfe/pfk_fscrypt.c"
+        
+        for PFK_SRC in "$PFK_SRC_1" "$PFK_SRC_2"; do
+          if [ -f "$PFK_SRC" ]; then
+            echo "🛠️ 正在修复 $PFK_SRC 的内核符号缺失..."
+            # 在文件头部注入打桩函数，默认返回 false (0) 骗过编译器，确保正常打包开机
+            sed -i '1i #include <linux/types.h>\n#include <linux/blkdev.h>\nbool fscrypt_enc_bio_mergeable(const struct bio *bio, const struct bio *next_bio) { return false; }' "$PFK_SRC"
+          fi
+        done
 
         # ==========================================
         # 3. 修复 Coresight (coresight-etm4x.c) 宏定义缺失
