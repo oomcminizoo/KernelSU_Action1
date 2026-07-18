@@ -1,4 +1,4 @@
-name: Build Kernel (Debug)
+name: Build Kernel
 on:
   workflow_dispatch:
 
@@ -114,7 +114,7 @@ jobs:
         fi
 
     # ============================================================
-    # 1. Setup KernelSU - 直接克隆源码
+    # 1. Setup KernelSU - 直接克隆源码（不使用 setup.sh）
     # ============================================================
     - name: Setup KernelSU
       if: env.ENABLE_KERNELSU == 'true'
@@ -125,7 +125,7 @@ jobs:
         echo "UPLOADNAME=-KernelSU_$KSU_VERSION" >> $GITHUB_ENV
 
     # ============================================================
-    # 2. Setup Configuration for Kernel
+    # 2. Setup Configuration for Kernel（包含所有配置修改）
     # ============================================================
     - name: Setup Configuration for Kernel
       run: |
@@ -151,7 +151,13 @@ jobs:
             fi
         fi
 
-        # ---- 其他配置 ----
+        # ---- 启用 MSM_CAMERA 系列（修复摄像头链接错误） ----
+        echo "🔧 启用 MSM_CAMERA 支持..."
+        echo "CONFIG_MSM_CAMERA=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        echo "CONFIG_MSMB_CAMERA=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+        echo "# CONFIG_MSM_CAMERA_DEBUG is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
+
+        # ---- 原有其他配置 ----
         if [ ${{ env.ADD_KPROBES_CONFIG }} = true -a ${{ env.APPLY_KSU_PATCH }} != true ]; then
             echo "CONFIG_MODULES=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
             echo "CONFIG_KPROBES=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
@@ -171,7 +177,7 @@ jobs:
             echo "CONFIG_CC_WERROR=n" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         fi
 
-        # ---- 禁用 PFK 和 Coresight warning ----
+        # ---- 禁用 PFK 和 Coresight 避免 warning ----
         echo "# CONFIG_PFK is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_SECURITY_PFK is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_CORESIGHT is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
@@ -271,7 +277,7 @@ jobs:
         max-size: 2G
 
     # ============================================================
-    # 4. Build kernel（调试版：打印大量配置信息）
+    # 4. Build kernel（配置和编译合并，无额外交互）
     # ============================================================
     - name: Build kernel
       run: |
@@ -290,19 +296,6 @@ jobs:
         echo "⚙️ 配置内核..."
         make -j$(nproc --all) O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.KERNEL_CONFIG }}
 
-        # ===== 调试信息：打印当前 .config 中所有与摄像头相关的配置 =====
-        echo "========== DEBUG: 当前 .config 中的摄像头相关选项 =========="
-        grep -iE "camera|actuator|ois" out/.config | tee camera_config.txt || echo "未找到任何相关配置"
-
-        echo "🔧 启用 MSM_CAMERA..."
-        scripts/config --file out/.config --enable MSM_CAMERA
-        # 如果有 MSMB_CAMERA，也启用
-        scripts/config --file out/.config --enable MSMB_CAMERA 2>/dev/null || true
- 
-        grep -E "CONFIG_MSM_CAMERA|CONFIG_MSMB_CAMERA" out/.config || echo "未找到相关配置"
-           
-
-        # ===== 编译内核 =====
         echo "🔨 编译内核..."
         if [ ${{ env.ENABLE_CCACHE }} = true ]; then
             make -j$(nproc --all) CC="ccache aarch64-linux-gnu-gcc" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }}
