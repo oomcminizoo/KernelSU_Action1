@@ -1,4 +1,4 @@
-name: Build Kernel
+name: Build Kernel (Debug)
 on:
   workflow_dispatch:
 
@@ -114,7 +114,7 @@ jobs:
         fi
 
     # ============================================================
-    # 修改1: Setup KernelSU - 不用 setup.sh，直接克隆源码
+    # 1. Setup KernelSU - 直接克隆源码
     # ============================================================
     - name: Setup KernelSU
       if: env.ENABLE_KERNELSU == 'true'
@@ -125,7 +125,7 @@ jobs:
         echo "UPLOADNAME=-KernelSU_$KSU_VERSION" >> $GITHUB_ENV
 
     # ============================================================
-    # 修改2: Setup Configuration for Kernel（保留原有 + 新增 MANUAL_HOOK）
+    # 2. Setup Configuration for Kernel
     # ============================================================
     - name: Setup Configuration for Kernel
       run: |
@@ -142,7 +142,7 @@ jobs:
             fi
         fi
 
-        # ---- 新增：确保手动钩子开启 ----
+        # ---- 手动钩子开启 ----
         if [ ${{ env.ENABLE_KERNELSU }} = true ]; then
             if ! grep -q "CONFIG_KSU_MANUAL_HOOK" arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}; then
                 echo "CONFIG_KSU_MANUAL_HOOK=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
@@ -151,7 +151,7 @@ jobs:
             fi
         fi
 
-        # ---- 原有其他配置 ----
+        # ---- 其他配置 ----
         if [ ${{ env.ADD_KPROBES_CONFIG }} = true -a ${{ env.APPLY_KSU_PATCH }} != true ]; then
             echo "CONFIG_MODULES=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
             echo "CONFIG_KPROBES=y" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
@@ -171,16 +171,14 @@ jobs:
             echo "CONFIG_CC_WERROR=n" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         fi
 
-        # ---- 禁用 PFK 和 Coresight 避免 warning ----
+        # ---- 禁用 PFK 和 Coresight warning ----
         echo "# CONFIG_PFK is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_SECURITY_PFK is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_CORESIGHT is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_CORESIGHT_ETM4X is not set" >> arch/${{ env.ARCH }}/configs/${{ env.KERNEL_CONFIG }}
 
-        # 注意：摄像头驱动的禁用已移至 Build kernel 步骤（在 defconfig 后操作）
-
     # ============================================================
-    # 修改3: 自动应用 ReSukiSU 手动钩子
+    # 3. 自动应用 ReSukiSU 手动钩子
     # ============================================================
     - name: Apply ReSukiSU manual hooks
       if: env.ENABLE_KERNELSU == 'true'
@@ -273,7 +271,7 @@ jobs:
         max-size: 2G
 
     # ============================================================
-    # 修改4: Build kernel - 在 defconfig 后禁用摄像头驱动
+    # 4. Build kernel（调试版：打印大量配置信息）
     # ============================================================
     - name: Build kernel
       run: |
@@ -292,14 +290,33 @@ jobs:
         echo "⚙️ 配置内核..."
         make -j$(nproc --all) O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.KERNEL_CONFIG }}
 
-        # ===== 在生成 .config 后立即禁用摄像头驱动 =====
-        echo "🔧 禁用摄像头 actuator/ois 驱动以避免链接错误..."
-        scripts/config --file out/.config --disable VIDEO_CAMERA_ACTUATOR
-        scripts/config --file out/.config --disable VIDEO_CAMERA_OIS
-        # 额外安全措施：如果上述选项不存在，用 sed 强制注释
+        # ===== 调试信息：打印当前 .config 中所有与摄像头相关的配置 =====
+        echo "========== DEBUG: 当前 .config 中的摄像头相关选项 =========="
+        grep -iE "camera|actuator|ois" out/.config | tee camera_config.txt || echo "未找到任何相关配置"
+
+        # ===== 尝试禁用所有可能的选项 =====
+        echo "🔧 尝试禁用摄像头 actuator/ois 驱动..."
+        for opt in VIDEO_CAMERA_ACTUATOR VIDEO_CAMERA_OIS CAM_ACTUATOR CAM_OIS MSM_CAMERA; do
+          echo "尝试禁用 CONFIG_$opt"
+          scripts/config --file out/.config --disable $opt || true
+        done
+
+        # 强制注释掉这些行（双重保险）
         sed -i 's/^CONFIG_VIDEO_CAMERA_ACTUATOR=.*/# CONFIG_VIDEO_CAMERA_ACTUATOR is not set/' out/.config
         sed -i 's/^CONFIG_VIDEO_CAMERA_OIS=.*/# CONFIG_VIDEO_CAMERA_OIS is not set/' out/.config
+        sed -i 's/^CONFIG_CAM_ACTUATOR=.*/# CONFIG_CAM_ACTUATOR is not set/' out/.config
+        sed -i 's/^CONFIG_CAM_OIS=.*/# CONFIG_CAM_OIS is not set/' out/.config
+        sed -i 's/^CONFIG_MSM_CAMERA=.*/# CONFIG_MSM_CAMERA is not set/' out/.config
 
+        # ===== 调试信息：禁用后再次检查 =====
+        echo "========== DEBUG: 禁用后的摄像头相关选项 =========="
+        grep -iE "camera|actuator|ois" out/.config | tee camera_config_after.txt || echo "已成功禁用所有相关配置"
+
+        # ===== 额外检查：确保没有遗漏 =====
+        echo "========== DEBUG: 所有以 CONFIG_*CAM* 开头的选项 =========="
+        grep "^CONFIG_.*CAM" out/.config || echo "无"
+
+        # ===== 编译内核 =====
         echo "🔨 编译内核..."
         if [ ${{ env.ENABLE_CCACHE }} = true ]; then
             make -j$(nproc --all) CC="ccache aarch64-linux-gnu-gcc" O=out ARCH=${{ env.ARCH }} ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }}
