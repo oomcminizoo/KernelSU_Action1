@@ -297,7 +297,7 @@ jobs:
         # 修复逻辑 2: 针对老版本 camera 的厂商马达与防抖未定义引用错误（在头部强行打入空占位桩函数）
         ACTUATOR_CORE="drivers/media/platform/msm/camera/cam_sensor_module/cam_actuator/cam_actuator_core.c"
         if [ -f "$ACTUATOR_CORE" ]; then
-          sed -i '1i struct camera_io_master; int clearRearVCMInitDownload(struct camera_io_master *io_info) { return 0; } int checkRearVCMLTC(struct camera_io_master *io_info) { return 0; }' "$ACTUATOR_CORE"
+          sed -i '1i struct camera_io_master; void clearRearVCMInitDownload(struct camera_io_master *io_info) { return; } int checkRearVCMLTC(struct camera_io_master *io_info) { return 0; }' "$ACTUATOR_CORE"
         fi
 
         OIS_CORE="drivers/media/platform/msm/camera/cam_sensor_module/cam_ois/cam_ois_core.c"
